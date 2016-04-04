@@ -1,6 +1,6 @@
 package org.owm.libwlocate;
 
-import java.io.*; 
+import java.io.*;
 import java.net.*;
 import java.util.*;
 import android.content.*;
@@ -11,33 +11,39 @@ import android.os.*;
 
 
 /**
- * Internal class, used for receiving the result
- */
-class wloc_res
-{
-   public byte  version,length;
-   public byte  result,iresult;
-   public short quality;
-   public byte  cres6,cres7,cres8;
-   public int   lat,lon;    
-   public short ccode;
-   public short wres34,wres56,wres78;
-}
-
-
-
-/**
  * Internal class, used for storing the position information
  */
 class WlocPosition
 {
-   WlocPosition()
-   {   
-   }
-   
+
    double lat,lon;
    short  quality;
    short  ccode;
+   WlocPosition (){
+
+   }
+   WlocPosition(double latitude, double longitude)
+   {
+      this.lat = latitude;
+      this.lon = longitude;
+   }
+
+   public short getCcode() {
+      return ccode;
+   }
+
+   public void setCcode(short ccode) {
+      this.ccode = ccode;
+   }
+
+   public short getQuality() {
+      return quality;
+   }
+
+   public void setQuality(short quality) {
+      this.quality = quality;
+   }
+
 }
 
 
@@ -46,7 +52,7 @@ class WlocPosition
  * Geopositioning/location class to evaluate the current position without using the standard location mechanisms
  * where the privacy rules are not clear. It tries to evaluate the current geographic position by using GPs and
  * - in case this fails or GPS is not available - by using other parameters like surrounding WLAN networks.<BR><BR>
- * 
+ *
  * The usage is quite simple: create an own class that inherits from WLocate and overwrite method
  * wloc_return_position(). Call wloc_request_position() to start position evaluation. The resulting is returned via
  * overwritten method wloc_return_position() asynchronously.<BR><BR>
@@ -60,23 +66,26 @@ public class WLocate implements Runnable
    public static final int FLAG_NO_GPS_ACCESS =0x0002; /** Don't use a GPS device to evaluate the position data, this option disables the WLAN_based position retrieval */
    public static final int FLAG_NO_IP_LOCATION=0x0004; /** Don't send a request to the server for IP-based location in case no WLANs are available */
    public static final int FLAG_UPDATE_AGPS   =0x0008; /** Update AGPS data to get better/faster/mor accurate GPS fixes; this flag is useless when FLAG_NO_GPS_ACCESS is set too */
-   
+
    public static final int WLOC_OK=0;               /** Result code for position request, given position information are OK */
    public static final int WLOC_CONNECTION_ERROR=1; /** Result code for position request, a connection error occured, no position information are available */
-   public static final int WLOC_SERVER_ERROR=2;     
+   public static final int WLOC_SERVER_ERROR=2;
    public static final int WLOC_LOCATION_ERROR=3;   /** Result code for position request, the position could not be evaluated, no position information are available */
    public static final int WLOC_ERROR=100;          /** Result code for position request, an unknown error occured, no position information are available */
-   
+
+   public static final String LOC_SERVER_OPENWLANMAP = "http://openwlanmap.org/";
+   public static final String LOC_SERVER_OPENWIFISU = "http://openwifi.su/";
    private static final int WLOC_RESULT_OK=1;
 //   private static final int WLOC_RESULT_ERROR=2;
 //   private static final int WLOC_RESULT_IERROR=3;
-   
+
    private Location            lastLocation=null;
    private LocationManager     location;
    private GPSLocationListener locationListener;
    private GPSStatusListener   statusListener;
-   private WifiManager         wifi;
+   private WifiManager         wifiMgr;
    private WifiReceiver        receiverWifi = new WifiReceiver();
+   boolean   gpsLocationWanted;
    private boolean             GPSAvailable=false,scanStarted=false,AGPSUpdated=false;
    private double              m_lat,m_lon;
    private float               m_radius=1.0f,m_speed=-1.0f,m_cog=-1.0f;
@@ -94,11 +103,12 @@ public class WLocate implements Runnable
     * @param ctx current context, hand over Activity object here
     * @param url domain name / URL (with appended slash!) where getpos.php for position retrieval can be found
     */
-   public WLocate(Context ctx,String url)
+   public WLocate(Context ctx,String url, boolean useGps)
    throws IllegalArgumentException
    {
+      gpsLocationWanted = useGps;
       locatorURL=url;
-      wifi = (WifiManager) ctx.getSystemService(Context.WIFI_SERVICE);
+      wifiMgr = (WifiManager) ctx.getSystemService(Context.WIFI_SERVICE);
       this.ctx=ctx;
       startGPSLocation();
       me=this;
@@ -113,11 +123,15 @@ public class WLocate implements Runnable
    public WLocate(Context ctx)
    throws IllegalArgumentException
    {
-      this(ctx,"http://openwlanmap.org/");
+      this(ctx,LOC_SERVER_OPENWLANMAP);
+   }
+   public WLocate(Context ctx,String url)
+           throws IllegalArgumentException
+   {
+      this(ctx,url, false);
    }
 
-   
-   
+
    private void startGPSLocation()
    {
       location= (LocationManager)ctx.getSystemService(Context.LOCATION_SERVICE);
@@ -140,7 +154,7 @@ public class WLocate implements Runnable
 	  }
       catch (IllegalArgumentException iae) // just in case receiverWifi is not registered yet
       {
-    	  
+    	  iae.printStackTrace();
       }
    }
    
@@ -175,9 +189,9 @@ public class WLocate implements Runnable
     	 location.sendExtraCommand("gps", "force_time_injection", bundle);
          AGPSUpdated=true;
       }
-      if ((!wifi.isWifiEnabled()) && (!GPSAvailable))
+      if ((!wifiMgr.isWifiEnabled()) && (!GPSAvailable))
        wloc_return_position(WLOC_LOCATION_ERROR,0.0,0.0,0.0f,(short)0);
-      wifi.startScan();
+      wifiMgr.startScan();
    }
 
    
@@ -228,7 +242,7 @@ public class WLocate implements Runnable
   	           else if (pString.contains("quality="))
   	           {
   	        	  pString=pString.substring(8);
-  	              position.quality=(short)Integer.parseInt(pString);
+  	              position.setQuality((short)Integer.parseInt(pString));
   	           }
   	           else if (pString.contains("lat="))
   	           {
@@ -251,6 +265,7 @@ public class WLocate implements Runnable
       }
   	  catch (IOException ioe)
       {
+         ioe.printStackTrace();
       }
   	  finally
       {
@@ -278,7 +293,7 @@ public class WLocate implements Runnable
          
          if (!scanStarted) return;
          scanStarted=false;
-         List<ScanResult> configs=wifi.getScanResults();
+         List<ScanResult> configs= wifiMgr.getScanResults();
          if (configs==null) return;
          locationInfo.wifiScanResult=configs;
          locationInfo.requestData=new wloc_req();
@@ -295,7 +310,7 @@ public class WLocate implements Runnable
          }        
          locationInfo.lastLocMethod=loc_info.LOC_METHOD_NONE;
          locationInfo.lastSpeed=-1.0f;
-         if (GPSAvailable) GPSAvailable=(SystemClock.elapsedRealtime()-lastLocationMillis) < 7500;
+         if (GPSAvailable  && gpsLocationWanted) GPSAvailable=(SystemClock.elapsedRealtime()-lastLocationMillis) < 7500;
          if (!GPSAvailable)
          {
             if ((scanFlags & FLAG_NO_NET_ACCESS)!=0)
@@ -338,11 +353,11 @@ public class WLocate implements Runnable
    
    public void run()
    {
-      int           ret=WLOC_LOCATION_ERROR;
+      int  ret=WLOC_LOCATION_ERROR;
       WlocPosition pos=null;
       
       pos=new WlocPosition();
-      ret=get_position(locationInfo.requestData,pos);
+      ret =get_position(locationInfo.requestData,pos);
       locationInfo.lastLocMethod=loc_info.LOC_METHOD_LIBWLOCATE;
       if (pos.quality<=0)
       {
