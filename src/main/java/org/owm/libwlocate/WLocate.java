@@ -18,7 +18,7 @@ class WlocPosition
 
    double lat,lon;
    short  quality;
-   short  ccode;
+   short countryCode;
    WlocPosition (){
 
    }
@@ -28,12 +28,12 @@ class WlocPosition
       this.lon = longitude;
    }
 
-   public short getCcode() {
-      return ccode;
+   public short getCountryCode() {
+      return countryCode;
    }
 
-   public void setCcode(short ccode) {
-      this.ccode = ccode;
+   public void setCountryCode(short countryCode) {
+      this.countryCode = countryCode;
    }
 
    public short getQuality() {
@@ -46,7 +46,93 @@ class WlocPosition
 
 }
 
+/**
+ * This class should handle the website request instead of the WLocate.
+ * To achieve this we need a Messenger and an Handler
+ *
+ * @author fabmazz
+ */
+class DatabaseRequester implements Runnable {
+    Messenger messenger;
+    String postData, line;
+    URL websiteURL;
+    HttpURLConnection con =null;
+    BufferedOutputStream outputStream =null;
+    WlocPosition position;
+    BufferedReader buffReader;
 
+    /**
+     *
+     * @param url this is the URL to make the connection to, already prepared
+     * @param postData The data to send in the POST request, already compressed in one string
+     * @param incomingMsg the messenger needed for IPC
+     */
+    public DatabaseRequester(URL url, String postData, Messenger incomingMsg) {
+        this.messenger = incomingMsg;
+        this.websiteURL = url;
+        this.postData =  postData;
+    }
+
+    @Override
+    public void run() {
+        int rc;
+        position = new WlocPosition();
+        try {
+            con = (HttpURLConnection) websiteURL.openConnection();
+            if (con == null) return;
+            con.setDoOutput(true); // enable POST
+            con.setRequestMethod("POST");
+            con.addRequestProperty("Content-Type", "application/x-www-form-urlencoded, *.*");
+            con.addRequestProperty("Content-Length", "" + postData.length());
+            outputStream = new BufferedOutputStream(con.getOutputStream());
+            outputStream.write(postData.getBytes(), 0, postData.length());
+            outputStream.flush();
+            outputStream.close();
+            rc = con.getResponseCode();
+            if (rc != HttpURLConnection.HTTP_OK) {
+                sendErrorMessage(WLocate.WLOC_SERVER_ERROR);
+                return;
+                //todo thread stopping
+            }
+            buffReader = new BufferedReader(new InputStreamReader(con.getInputStream()));
+            try {
+                while ((line = buffReader.readLine())!=null) {
+                    line = line.trim();
+                    if (line.contains("result=0"))
+                        sendErrorMessage(WLocate.WLOC_LOCATION_ERROR); //todo thread stopping
+                    else if (line.contains("quality=")) {
+                        line = line.substring(8);
+                        position.setQuality((short) Integer.parseInt(line));
+                    } else if (line.contains("lat=")) {
+                        line = line.substring(4);
+                        position.lat = Double.parseDouble(line);
+                    } else if (line.contains("lon=")) {
+                        line = line.substring(4);
+                        position.lon = Double.parseDouble(line);
+                    }
+                }
+            } catch (NumberFormatException nfe) {
+                buffReader.close();
+                sendErrorMessage(WLocate.WLOC_SERVER_ERROR); //todo thread stopping
+            }
+            buffReader.close();
+        } catch (IOException excep){
+            excep.printStackTrace();
+            sendErrorMessage(WLocate.IO_ERROR);
+        } finally {
+            sendPosition();
+        }
+    }
+
+    private void sendPosition() {
+        //TODO: finish method
+    }
+
+    private void sendErrorMessage(int error) {
+        //TODO: finish method
+
+    }
+}
 
 /**
  * Geopositioning/location class to evaluate the current position without using the standard location mechanisms
@@ -68,14 +154,15 @@ public class WLocate implements Runnable
    public static final int FLAG_UPDATE_AGPS   =0x0008; /** Update AGPS data to get better/faster/mor accurate GPS fixes; this flag is useless when FLAG_NO_GPS_ACCESS is set too */
 
    public static final int WLOC_OK=0;               /** Result code for position request, given position information are OK */
-   public static final int WLOC_CONNECTION_ERROR=1; /** Result code for position request, a connection error occured, no position information are available */
+   public static final int WLOC_CONNECTION_ERROR=1; /** Result code for position request, a connection error occurred, no position information are available */
    public static final int WLOC_SERVER_ERROR=2;
    public static final int WLOC_LOCATION_ERROR=3;   /** Result code for position request, the position could not be evaluated, no position information are available */
-   public static final int WLOC_ERROR=100;          /** Result code for position request, an unknown error occured, no position information are available */
+   public static final int WLOC_ERROR=100;          /** Result code for position request, an unknown error occurred, no position information are available */
 
    public static final String LOC_SERVER_OPENWLANMAP = "http://openwlanmap.org/";
    public static final String LOC_SERVER_OPENWIFISU = "http://openwifi.su/";
    private static final int WLOC_RESULT_OK=1;
+    public static final int IO_ERROR = 4;
 //   private static final int WLOC_RESULT_ERROR=2;
 //   private static final int WLOC_RESULT_IERROR=3;
 
@@ -199,10 +286,12 @@ public class WLocate implements Runnable
    public loc_info last_location_info()
    {
       return locationInfo;
-   }   
+   }
 
-   
-   
+
+    /**
+     *
+     */
    private int get_position(wloc_req request,WlocPosition position)
    {
       String               pString="";
@@ -283,7 +372,22 @@ public class WLocate implements Runnable
 	  return WLOC_OK;
    }
 
-   
+    /**
+     * Handler for receiving the server response
+     *
+     *  @author fabmazz
+     */
+
+    class PositionHandler extends Handler {
+        @Override
+        public void handleMessage(Message msg) {
+            switch (msg.what) {
+
+                default:
+                    super.handleMessage(msg);
+            }
+        }
+    }
    
    class WifiReceiver extends BroadcastReceiver 
    {
@@ -307,9 +411,11 @@ public class WLocate implements Runnable
             
             netCnt++;
             if (netCnt>=wloc_req.WLOC_MAX_NETWORKS) break;   
-         }        
+         }
+
          locationInfo.lastLocMethod=loc_info.LOC_METHOD_NONE;
          locationInfo.lastSpeed=-1.0f;
+          //todo separate GPS and WLAN positioning methods, so that one can choose the preferred method
          if (GPSAvailable  && gpsLocationWanted) GPSAvailable=(SystemClock.elapsedRealtime()-lastLocationMillis) < 7500;
          if (!GPSAvailable)
          {
@@ -361,13 +467,13 @@ public class WLocate implements Runnable
       locationInfo.lastLocMethod=loc_info.LOC_METHOD_LIBWLOCATE;
       if (pos.quality<=0)
       {
-         wloc_return_position(ret,pos.lat,pos.lon,10000.0f,pos.ccode);
-         wloc_return_position(ret,pos.lat,pos.lon,10000.0f,pos.ccode,(float)-1.0);
+         wloc_return_position(ret,pos.lat,pos.lon,10000.0f,pos.countryCode);
+         wloc_return_position(ret,pos.lat,pos.lon,10000.0f,pos.countryCode,(float)-1.0);
       }
       else
       {
-         wloc_return_position(ret,pos.lat,pos.lon,120-pos.quality,pos.ccode);
-         wloc_return_position(ret,pos.lat,pos.lon,120-pos.quality,pos.ccode,(float)-1.0);
+         wloc_return_position(ret,pos.lat,pos.lon,120-pos.quality,pos.countryCode);
+         wloc_return_position(ret,pos.lat,pos.lon,120-pos.quality,pos.countryCode,(float)-1.0);
       }
    }
    
