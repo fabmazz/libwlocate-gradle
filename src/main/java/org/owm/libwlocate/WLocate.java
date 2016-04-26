@@ -50,7 +50,7 @@ class WlocPosition
 
 /**
  * This class should handle the website request instead of the WLocate.
- * To achieve this we need a Messenger and an Handler
+ * We need a Messenger and an Handler to communicate between the two
  *
  * @author fabmazz
  */
@@ -58,10 +58,9 @@ class DatabaseRequester implements Runnable {
     private Messenger messenger;
     private String postData;
     private  String websiteURL;
-    HttpURLConnection con =null;
-    private BufferedOutputStream outputStream =null;
-    WlocPosition position;
-    BufferedReader buffReader;
+    private HttpURLConnection con;
+    private BufferedOutputStream outputStream;
+    private WlocPosition position;
 
     /**
      *
@@ -73,6 +72,8 @@ class DatabaseRequester implements Runnable {
         this.messenger = incomingMsg;
         this.websiteURL = url;
         this.postData =  postData;
+        outputStream = null;
+        con = null;
     }
 
     @Override
@@ -96,13 +97,13 @@ class DatabaseRequester implements Runnable {
                 sendErrorMessage(WLocate.WLOC_CONNECTION_ERROR);
                 return;
             }
-            buffReader = new BufferedReader(new InputStreamReader(con.getInputStream()));
+            BufferedReader buffReader = new BufferedReader(new InputStreamReader(con.getInputStream()));
             try {
                 String line;
                 while ((line = buffReader.readLine())!=null) {
                     line = line.trim();
                     if (line.contains("result=0"))
-                        sendErrorMessage(WLocate.WLOC_LOCATION_ERROR); //todo thread stopping
+                        sendErrorMessage(WLocate.PARSING_RESPONSE_ERROR); //todo thread stopping
                     else if (line.contains("quality=")) {
                         line = line.substring(8);
                         position.setQuality((short) Integer.parseInt(line));
@@ -162,11 +163,14 @@ class DatabaseRequester implements Runnable {
  * wlocRequestPosition(). Call wlocRequestPosition() to start position evaluation. The resulting is returned via
  * given interface asynchronously.<BR><BR>
  *
+ * IMPORTANT: The results are given via the WLocListener interface, but there is a fallback on the old methods.
+ *
  * Beside of that it is recommended to call the doPause() and doResume() methods whenever an onPause() and onResume()
  * event occurs in main Activity to avoid Exceptions caused by the WiFi-receiver.
  */
 public class WLocate
 {
+    //These flags are not really needed to work.
    public static final int FLAG_NO_NET_ACCESS =0x0001; /** Don't perform any network accesses to evaluate the position data, this option disables the WLAN_based position retrieval */
    public static final int FLAG_NO_GPS_ACCESS =0x0002; /** Don't use a GPS device to evaluate the position data, this option disables the WLAN_based position retrieval */
    public static final int FLAG_NO_IP_LOCATION=0x0004; /** Don't send a request to the server for IP-based location in case no WLANs are available */
@@ -175,7 +179,7 @@ public class WLocate
    public static final int WLOC_OK=0;               /** Result code for position request, given position information are OK */
    public static final int WLOC_CONNECTION_ERROR=1; /** Result code for position request, a connection error occurred, no position information are available */
    public static final int WLOC_SERVER_ERROR=2;
-   public static final int WLOC_LOCATION_ERROR=3;   /** Result code for position request, the position could not be evaluated, no position information are available */
+   public static final int PARSING_RESPONSE_ERROR =3;   /** Result code for position request, error occured while parsing the server response, no position information are available */
    public static final int WLOC_ERROR=100;
     public static final int WIFI_DISABLED = 6;
     public static final int THREAD_ALREADY_RUNNING=7;
@@ -183,8 +187,6 @@ public class WLocate
    public static final String LOC_SERVER_OPENWIFISU = "http://openwifi.su/";
    private static final int WLOC_RESULT_OK=1;
     public static final int IO_ERROR = 4;
-//   private static final int WLOC_RESULT_ERROR=2;
-//   private static final int WLOC_RESULT_IERROR=3;
 
    private Location            lastLocation=null;
    private LocationManager     location;
@@ -210,6 +212,7 @@ public class WLocate
     * Constructor for WLocate class, this constructor has to be overwritten by inheriting class
     * @param ctx current context, hand over Activity object here
     * @param url domain name / URL (with appended slash!) where getpos.php for position retrieval can be found
+    *            either OpenWlanMap.org or Openwifi.su
     * @param useGps whether or not the app wants gps location. In this case, it should handle permissions by itself
     */
    public WLocate(Context ctx,String url, boolean useGps)
@@ -231,7 +234,7 @@ public class WLocate
    public WLocate(Context ctx)
    throws IllegalArgumentException
    {
-      this(ctx,LOC_SERVER_OPENWIFISU);
+      this(ctx,LOC_SERVER_OPENWLANMAP);
    }
    public WLocate(Context ctx,String url)
            throws IllegalArgumentException
@@ -289,6 +292,7 @@ public class WLocate
     * Start position evaluation process, the result is returned via method wloc_return_position()
     * that may be called asynchronously
     * @param flags specifies how the position has to be evaluated using the FLAG_NO_xxx_ACCESS-values
+    *              it's quite ok to just put 0
     */
    public void wlocRequestPosition(int flags)
    {
@@ -335,7 +339,7 @@ public class WLocate
        if (netThread==null || !(netThread.isAlive())){
        Runnable runnable = new DatabaseRequester(locatorURL+"getpos.php", sb.toString(), messenger);
        netThread = new Thread(runnable);
-       netThread.run();
+       netThread.start();
            return 0;
        }
        else return THREAD_ALREADY_RUNNING;
@@ -438,27 +442,7 @@ public class WLocate
    }
 
 
-   /*
-   public void run()
-   {
-      int  ret=WLOC_LOCATION_ERROR;
-      WlocPosition pos=null;
-      
-      pos=new WlocPosition();
-      ret =get_position(locationInfo.requestData,pos);
-      locationInfo.lastLocMethod=loc_info.LOC_METHOD_LIBWLOCATE;
-      if (pos.quality<=0)
-      {
-         wloc_return_position(ret,pos.lat,pos.lon,10000.0f,pos.countryCode);
-         wloc_return_position(ret,pos.lat,pos.lon,10000.0f,pos.countryCode,(float)-1.0);
-      }
-      else
-      {
-         wloc_return_position(ret,pos.lat,pos.lon,120-pos.quality,pos.countryCode);
-         wloc_return_position(ret,pos.lat,pos.lon,120-pos.quality,pos.countryCode,(float)-1.0);
-      }
-   }
-   */
+
    
    
    /**
