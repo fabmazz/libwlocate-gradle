@@ -28,6 +28,7 @@ import android.net.wifi.*;
 import android.location.*;
 import android.os.*;
 import android.os.Handler;
+import android.util.Log;
 
 
 /**
@@ -225,7 +226,6 @@ public class WLocate
     protected WLocListener wLocListener;
 
 
-
    /**
     * Constructor for WLocate class, this constructor has to be overwritten by inheriting class
     * @param ctx current context, hand over Activity object here
@@ -347,8 +347,6 @@ public class WLocate
        StringBuilder sb=new StringBuilder();
        Handler mhandler = new PositionHandler(new WeakReference<WLocate>(this));
        Messenger messenger = new Messenger(mhandler);
-
-      
        for (int i=0; i<wloc_req.WLOC_MAX_NETWORKS; i++)
        if ((request.bssids[i]!=null) && (request.bssids[i].length()>0)) {
            sb.append(request.bssids[i]);
@@ -417,13 +415,28 @@ public class WLocate
       public void onReceive(Context c, Intent intent) 
       {
          int           netCnt=0;
-         
+          //Comparator to compare the signal strengths
+          Comparator<ScanResult> strongerSignalComp = new Comparator<ScanResult>() {
+              @Override
+              public int compare(ScanResult lhs, ScanResult rhs) {
+                  //if level is higher then should be on top -> order is reversed
+                  if(lhs.level < rhs.level) return 1;
+                  else if(lhs.level==rhs.level) return 0;
+                  else return -1;
+              }
+          };
+
          if (!scanStarted) return;
          scanStarted=false;
          List<ScanResult> configs= wifiMgr.getScanResults();
          if (configs==null) return;
-         locationInfo.wifiScanResult=configs;
+          //Testing ordering list by stronger signal
+          Collections.sort(configs,strongerSignalComp);
+          locationInfo.wifiScanResult=configs;
          locationInfo.requestData=new wloc_req();
+
+
+
          if (configs.size()>0) for (ScanResult config : configs) 
          {            
             config.BSSID=config.BSSID.toUpperCase(Locale.US).replace(".",""); // some strange devices use a dot instead of :
@@ -431,7 +444,7 @@ public class WLocate
             if (config.BSSID.equalsIgnoreCase("000000000000")) continue; // invalid BSSID
             locationInfo.requestData.bssids[netCnt]=config.BSSID;
             locationInfo.requestData.signal[netCnt]=(byte)Math.abs(config.level);               
-            
+            Log.d("LocDemo wifiScan", "Current network RSSI: "+config.level);
             netCnt++;
             if (netCnt>=wloc_req.WLOC_MAX_NETWORKS) break;   
          }
